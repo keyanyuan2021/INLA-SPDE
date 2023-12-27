@@ -1,1 +1,521 @@
+#标化
+require(readxl)
+data1 <- read_excel("C:/Users/86156/Desktop/3212.xls")
+data1$sun2<-scale(data1$sun,center = T,scale=T)
+data1$temp2<-scale(data1$temp,center = T,scale = T)
+data1$water2<-scale(data1$water,center = T,scale=T)
+data1$education2<-scale(data1$education,center = T,scale=T)
+data1$GDP2<-scale(data1$GDP,center = T,scale=T)
+data1$pGDP2<-scale(data1$pGDP,center = T,scale=T)
+data1$cityout2<-scale(data1$cityout,center = T,scale=T)
+data1$PM2<-scale(data1$PM,center = T,scale=T)
+write.table (data1, file ="C:/Users/86156/Desktop/3212标化.csv",quote = F,sep=',')
+#相关性分析和多重共线性检验
+require(readxl)   
+data1 <- read_excel("C:/Users/86156/Desktop/487最终.xlsx")
+library(lme4)
+library(MASS)
+#单变量分析，协变量排序
+mod1<-glm.nb(pinc~offset(log(female1))+third,data=data1)
+summary(mod1)
+#多重共线性检验
+data2<-data1[,-c(1:13,15:18,20:23,26:28,30,36:38,40:70)]
+library(corrplot)
+tdc<-cor(data2, method="pearson")
+testRes = cor.mtest(data2, method="pearson",conf.level = 0.95)
+par(mar=c(5, 4, 4, 2) + 0.1)
+corrplot(tdc, method = "color",
+         tl.col = "black", tl.cex = 0.8, tl.srt = 45,tl.pos = "lt",
+         p.mat =testRes$p , diag = T, type = 'upper',
+         sig.level = c(0.001, 0.01, 0.05), pch.cex = 1.2,
+         insig = 'label_sig', pch.col = 'grey20', order = 'AOE')
+corrplot(tdc, method = "number", type = "lower", 
+         tl.col = "n", tl.cex = 0.8, tl.pos = "n",order = 'AOE',
+         add = T)
+corrplot(tdc,
+         method = "number", #设置相关性图展示类型
+         type = "lower", #设置只展示底部panel
+         bg = "white", #设置背景色
+         title = "mtcars data correlation", #设置标题
+)
+#vif
+mod1<-glm.nb(pinc~offset(log(female1))+mianji+nongcun+fifteenwenmang+gdp+lihun+sun,data=data1)
+library(car)
+Vif1<-vif(mod1)
+Vif1
+#逐步回归
+mod2=glm.nb(pinc~offset(log(female1)),data=data1)
+biggest<-glm.nb(pinc~offset(log(female1))+mianji1+nongcun1+fifteenwenmang1+gdp1+lihun1+sun1,data=data1)
+summary(biggest)
+step(mod2,direction="both",scope = biggest)
+fit<-step(biggest)
+#贝叶斯空间模型
+require(rgdal)
+require(readxl)
+Point_Data <- read_excel("C:/Users/86156/Desktop/487最终.xlsx")
+dim(Point_Data)
 
+library(INLA)
+library(gstat)
+library(sf)
+library(raster)
+
+china<- readOGR("C:/Users/86156/Desktop/底图.shp")
+Loc <- cbind(Point_Data$Lon, Point_Data$Lat)
+Point <- SpatialPointsDataFrame(coords = Loc, data = Point_Data, match.ID = T,
+                                proj4string = CRS("+proj=longlat +datum=WGS84 +no_defs"))
+par(mfrow = c(1,1), mar = c(0,0,0,0))
+plot(Point, col = 2, pch = 16, cex = 0.7)
+#半变异函数
+coordinates(Point_Data) = ~Lat+Lon
+plot(variogram(inc~1,Point_Data))
+H<-variogram(inc~1,Point_Data)
+H
+plot(H, plot.line = TRUE)
+m <- fit.variogram(H,vgm(6,"Exp",4,7))
+plot(H, model=m)
+print(m)
+range_parameter <- m$range
+range_parameter
+#Mesh网格的建立
+library(sf)
+boundary_shape <- st_read("C:/Users/86156/Desktop/边界1.shp")
+boundary_coords <- st_coordinates(boundary_shape)
+Mesh1 <- inla.mesh.2d(Loc,boundary = boundary_coords,offset=c(1,3),
+                      max.edge = c(2,6),
+                      cutoff =1 )
+par(mfrow = c(2,2), mar = c(1,1,1,1))
+plot(Mesh1,asp = 1, main = "Mesh1")
+points(Loc, col = 2, pch = 16, cex = 0.5)
+
+Mesh2 <- inla.mesh.2d(Loc,boundary = boundary_coords,offset=c(1,4),
+                      max.edge = c(1,5),
+                      cutoff =1 )
+plot(Mesh2,asp = 1, main = "")
+points(Loc, col = 2, pch = 16, cex = 0.5)
+
+Mesh3 <- inla.mesh.2d(Loc,boundary = boundary_coords,offset = c(1, 5),
+                      max.edge = c(1, 3),
+                      cutoff =0.7 )
+plot(Mesh3,asp = 1, main = "")
+points(Loc, col = 2, pch = 16, cex = 0.5)
+
+Mesh4 <- inla.mesh.2d(Loc,boundary = boundary_coords,offset = c(1, 7),
+                      max.edge = c(0.5, 2),
+                      cutoff = 0.5
+                      )
+plot(Mesh4,asp = 1, main = "")
+points(Loc, col = 2, pch = 16, cex = 0.5)
+
+par(mfrow = c(1,1), mar = c(1,1,1,1))
+plot(Mesh3,asp = 1, main = "")
+points(Point, col = 2, pch = 16, cex = 0.7)
+
+#权重矩阵
+A_point <- inla.spde.make.A(Mesh2, loc = Loc)
+dim (A_point)
+spde=inla.spde2.matern(mesh=Mesh1,alpha = 2)#随机偏微分
+spde$n.spde
+spde.pc   <- inla.spde2.pcmatern(Mesh2,                      
+                                 prior.range = c(0.1,0.1),  
+                                 prior.sigma = c(2,0.1))
+s.index=inla.spde.make.index(name="w",
+                             n.spde = spde.pc$n.spde)
+str(s.index)
+#建立堆栈
+Xmianji <- model.matrix(~ -1 + mianji1, data = Point_Data)
+Xmj=data.frame(mianji1=Xmianji[,1])
+N=nrow(Point_Data)
+N
+
+Xfemale <- model.matrix(~ -1 + female1, data = Point_Data)
+Xf=data.frame(female1=Xfemale[,1])
+N=nrow(Point_Data)
+N
+
+Xnongcun<-model.matrix(~-1+nongcun1,data=Point_Data)
+Xnc=data.frame(nongcun1=Xnongcun[,1])
+N=nrow(Point_Data)
+N
+
+XGDP <- model.matrix(~ -1 + gdp1, data = Point_Data)
+Xg=data.frame(gdp1=XGDP[,1])
+N=nrow(Point_Data)
+N
+
+Xfifteenwenmang <- model.matrix(~ -1 + fifteenwenmang1, data = Point_Data)
+Xwm=data.frame(fifteenwenmang1=Xfifteenwenmang[,1])
+N=nrow(Point_Data)
+N
+
+Xsun <- model.matrix(~ -1 + sun1, data = Point_Data)
+Xs=data.frame(sun1=Xsun[,1])
+N=nrow(Point_Data)
+N
+
+Xlihun<-model.matrix(~ -1 + lihun1, data = Point_Data)
+Xlh=data.frame(lihun1=Xlihun[,1])
+N=nrow(Point_Data)
+N
+
+XID<-model.matrix(~ -1 + ID, data = Point_Data)
+Xid=data.frame(ID=XID[,1])
+N=nrow(Point_Data)
+N
+
+Xarea<-model.matrix(~ -1+area,data = Point_Data)
+Xa=data.frame(area=Xarea[,1])
+
+stack.test=inla.stack(tag="test",
+                      data=list(y=Point_Data$pinc),
+                      A = list(1,1,1,1,1,1,1,1,1,1,A_point),
+                      effects= list(
+                        Intercept = rep(1, N),
+                        Xf=Xfemale,
+                        Xmj=Xmianji,
+                        Xnc=Xnongcun,
+                        Xg=XGDP,
+                        Xwm=Xfifteenwenmang,
+                        Xid=XID,
+                        Xs=Xsun,
+                        Xlh=Xlihun,
+                        Xa=Xarea,
+                        w = s.index))
+dim(inla.stack.A(stack.test))
+formula2 = y ~ -1+Intercept+offset(log(Xf))+f(w, model = spde)+f(Xid,model = "iid")+Xg+Xlh+Xnc+Xwm
+Mod_Point2 <- inla(formula2,
+                   data = inla.stack.data(stack.test, spde=spde.pc),
+                   family="poisson",
+                   control.compute = list(dic=TRUE, cpo=TRUE, waic=TRUE),
+                   control.predictor = list(A = inla.stack.A(stack.test),
+                                            compute = T))
+summary(Mod_Point2)
+A=Mod_Point2$summary.fitted.values$mean
+A<-A[1:483]
+C<-data.frame(A)
+X<-mean((Point_Data$inc- C$A)^2)
+sqrt(X)
+#估计其他区域
+library(raster)
+library(sp)
+library(rgdal)
+china<- readOGR("C:/Users/86156/Desktop/Export_Output_2.shp")#用Arcgis添加女性人口制成shp文件
+china$gdp1<-as.numeric(china$gdp1)
+china$lihun1<-as.numeric(china$lihun1)
+china$nongcun1<-as.numeric(china$nongcun1)
+china$fifteenw_1<-as.numeric(china$fifteenw_1)
+r = raster(china, res=0.04) 
+
+shape_r = rasterize(china, r,"female1")
+plot(shape_r)
+#plot(china,add=T)
+
+
+shape_r2 = rasterize(china,r,"ID")
+plot(shape_r2)
+#plot(china,add=T)
+
+shape_r3 = rasterize(china,r,"gdp1")
+plot(shape_r3)
+#plot(china,add=T)
+
+shape_r4 = rasterize(china,r,"lihun1")
+plot(shape_r4)
+#plot(china,add=T)
+
+shape_r5 = rasterize(china,r,"nongcun1")
+plot(shape_r5)
+
+shape_r6 = rasterize(china,r,"fifteenw_1")
+plot(shape_r6)
+
+dp <- rasterToPoints(shape_r)
+dim(dp)
+dp2<-rasterToPoints(shape_r2)
+dim(dp2)
+dp3 <- rasterToPoints(shape_r3)
+dim(dp3)
+dp4<-rasterToPoints(shape_r4)
+dim(dp4)
+dp5<-rasterToPoints(shape_r5)
+dim(dp5)
+dp6<-rasterToPoints(shape_r6)
+dim(dp6)
+#转换成2km*2km的栅格图
+#ra <- aggregate(shape_r, fact = 2, fun = mean)
+#ra2<-aggregate(shape_r2,fact=2,fun=mean)
+#ra3 <- aggregate(shape_r3, fact = 2, fun = mean)
+#ra4<-aggregate(shape_r4,fact=2,fun=mean)
+#ra5<-aggregate(shape_r5,fact=2,fun=mean)
+#ra6<-aggregate(shape_r6,fact=2,fun=mean)
+#ra7<-aggregate(shape_r7,fact=2,fun=mean)
+#栅格点的数目
+#dp <- rasterToPoints(ra)
+#dim(dp)
+#dp2<- rasterToPoints(ra2)
+#dim(dp2)
+#dp3<- rasterToPoints(ra3)
+#dim(dp3)
+#dp4<- rasterToPoints(ra4)
+#dim(dp4)
+#dp5<- rasterToPoints(ra5)
+#dim(dp5)
+#栅格点质心的xy坐标
+coop <- dp[, c("x", "y")]
+#将栅格的坐标于mesh网格合并
+Ap <- inla.spde.make.A(mesh = Mesh2, loc = coop)
+
+# stack for estimation stk.e
+stk.e <- inla.stack(
+  tag = "est",
+  data = list(y = Point_Data$pinc),
+  A = list(1,A_point),
+  effects = list(data.frame(Intercept= rep(1,483),  female=Point_Data$female1,ID=Point_Data$ID,gdp=Point_Data$gdp1,lihun=Point_Data$lihun1,nongcun=Point_Data$nongcun1,wenmang=Point_Data$fifteenwenmang1), w = s.index))
+
+# stack for prediction stk.p
+stk.p <- inla.stack(
+  tag = "pred",
+  data = list(y = NA),
+  A = list(1, Ap),
+  effects = list(data.frame(Intercept= rep(1,599225), female = dp[, 3],ID=dp2[,3],gdp=dp3[,3],lihun=dp4[,3],nongcun=dp5[,3],wenmang=dp6[,3]),w = s.index ))
+
+stk.full <- inla.stack(stk.e, stk.p)
+#模型
+formula1 <- y ~ -1 +offset(log(female))+ Intercept+f(w, model = spde.pc)+f(ID,model = "iid")+gdp+lihun+nongcun+wenmang
+res <- inla(formula1,
+            family = "poisson",
+            data = inla.stack.data(stk.full),
+            control.compute = list(dic=TRUE, cpo=TRUE, waic=TRUE),
+            control.predictor = list(
+              compute = TRUE, link = 1,
+              A = inla.stack.A(stk.full)))
+summary(res)
+
+index <- inla.stack.index(stack = stk.full, tag = "pred")$data
+prev_mean <- res$summary.fitted.values[index, "mean"]
+prev_ll <- res$summary.fitted.values[index, "0.025quant"]
+prev_ul <- res$summary.fitted.values[index, "0.975quant"]
+
+#绘制预测图
+library(ncdf4)
+library(raster)
+library(leaflet)
+pal <- colorNumeric("viridis", c(0, 1), na.color = "transparent")
+
+dpm <- rbind(
+  data.frame(
+    east = coop[, 1], north = coop[, 2],
+    value = prev_mean, variable = "prev_mean"
+  ),
+  data.frame(
+    east = coop[, 1], north = coop[, 2],
+    value = prev_ll, variable = "prev_ll"
+  ),
+  data.frame(
+    east = coop[, 1], north = coop[, 2],
+    value = prev_ul, variable = "prev_ul"
+  )
+)
+dpm<-data.frame(
+  east = coop[, 1], north = coop[, 2],
+  value = prev_mean, variable = "prev_mean"
+)
+
+library(ggplot2)
+siwang<-ggplot(dpm) + geom_tile(aes(east, north, fill = value)) +
+  facet_wrap(~variable, nrow = 1) +
+  coord_fixed(ratio = 1) +
+  scale_fill_gradient(
+    name = "发病率",
+    low = "blue", high = "orange"
+  ) +
+  theme_bw()
+
+plot(siwang)
+library(data.table)
+fwrite(Z5, file = "C:/Users/86156/Desktop/Z5.csv")
+#敏感性分析
+range_params <- seq(0.1, 10, length.out = 20)# 比如范围参数的可能值
+sigma_params <- seq(0.01, 5, length.out = 20)# 比如尺度参数的可能值
+#length.out参数指定了要生成的序列中元素的数量。因此，seq(0.01, 5, length.out = 5)会生成一个从0.01到5的等差数列，其中包含5个数字
+#尺度参数和范围参数来描述空间过程。这些参数决定了空间效应如何随距离而变化。
+#scale_values <- c(0.1, 0.5, 1, 2, 4)  # 比如参数的可能值
+#range_values <- c(0.1, 0.5, 1, 2, 4)  # 比如范围参数的可能值
+# 初始化一个列表来存储结果
+
+results <- expand.grid(range=range_params, sigma=sigma_params)
+# 循环遍历尺度参数和范围参数的值
+for(i in seq(nrow(results))){
+  range_val <- results$range[i]
+  sigma_val <- results$sigma[i]
+  
+  spde_model <- inla.spde2.pcmatern(Mesh3, 
+                                    prior.range = c(range_val, 0.1), 
+                                    prior.sigma = c(sigma_val, 0.1))
+  
+  # 定义模型公式
+  formula2 = y ~ -1+offset(log(Xf))+Intercept+f(w, model = spde)+f(Xid,model = "iid")+Xlh+Xg+Xnc+Xwm
+  
+  # 拟合INLA-SPDE模型
+  fit <- inla(formula2,
+              data = inla.stack.data(stack.test, spde=spde_model),
+              family="poisson",
+              control.compute = list(dic=TRUE, cpo=TRUE, waic=TRUE),
+              control.predictor = list(A = inla.stack.A(stack.test),
+                                       compute = T))
+  
+  # 保存模型结果
+  results$DIC[i] <- fit$dic
+}
+print(results)
+results$DIC<-as.numeric(results$DIC)
+write.table (results, file ="C:/Users/86156/Desktop/敏感性分析mesh4.csv",quote = F,sep=',')
+#精度参数：精度是方差的倒数，精度参数则用于控制随机效应的整体不确定性，而不直接涉及空间结构。
+#绘制敏感性分析热图
+library(ggplot2)
+sensitivity_melted<-read_excel("C:/Users/86156/Desktop/敏感性分析.xlsx")
+ggplot(data = sensitivity_melted, aes(x = range, y = sigma, fill = DIC)) + 
+  geom_tile() + 
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = median(sensitivity_melted$value), 
+                       limit = c(min(sensitivity_melted$value), max(sensitivity_melted$value)),
+                       name = "Performance Metric") + 
+  labs(x = "range", y = "sigma", title = "Sensitivity Analysis Heatmap for INLA-SPDE Model") + 
+  theme_minimal()
+
+
+
+
+#交叉验证——新
+Point_Data<-data.frame(Point_Data)
+fold_indices <- sample(rep(1:5, length.out = nrow(Point_Data)))
+cv_results <- vector("list", 5)
+cv_test<-vector("list", 5)
+cv_rmse<-vector("list", 5)
+cv_me<-vector("list", 5)
+cv_mse<-vector("list", 5)
+train_data <- sample(1:nrow(Point_Data),nrow(Point_Data)*4/5)
+train_data <- Point_Data[train_data,]
+test_data<-Point_Data[-train_data,]
+for(i in 1:5){
+train_data <- Point_Data[fold_indices != i, ]
+test_data <- Point_Data[fold_indices == i, ]
+MeshPred <- inla.mesh.2d(Loc, offset = c(1, 4),
+                         max.edge = c(1, 3),
+                         cutoff =0.7 )
+
+spde.pred <- inla.spde2.pcmatern(MeshPred,                      
+                                 prior.range = c(0.1,0.1),  
+                                 prior.sigma = c(2,0.1))
+
+s.index.p <- inla.spde.make.index(name = "sp.field.pred",
+                                  n.spde = spde.pred$n.spde)
+
+Locy<- cbind(train_data$Lon, train_data$Lat)
+A_est  <- inla.spde.make.A(mesh = MeshPred,loc=Locy)
+Locyt<- cbind(test_data$Lon, test_data$Lat)
+A_pred <- inla.spde.make.A(mesh = MeshPred,loc=Locyt)
+N=nrow(train_data)
+M=nrow(test_data)
+StackEst <- inla.stack( tag = "Est",
+  data = list(y = train_data$pinc),
+                       A = list(1,1,1,1,1,1,1,A_est),
+                       effects = list(Intercept=rep(1,N),
+                                      female = train_data$female1,
+                                           lihun=train_data$lihun1,
+                                           GDP=train_data$gdp1,
+                                           wenmang=train_data$fifteenwenmang1,
+                                           nongcun=train_data$nongcun1,
+                                           ID=train_data$ID,
+                                           sp.field.pred=s.index.p))
+
+stackPred <- inla.stack(tag = "Pred",
+  data = list(y = NA),  # NAs in the response variable  
+                        A = list(1,1,1,1,1,1,1,A_pred),
+                        effects = list(Intercept=rep(1,M),
+                                       female = test_data$female1,
+                                       lihun=test_data$lihun1,
+                                       GDP=test_data$gdp1,
+                                       wenmang=test_data$fifteenwenmang1,
+                                       nongcun=test_data$nongcun1,
+                                       ID=test_data$ID,
+                                       sp.field.pred=s.index.p))
+
+StackJoin <- inla.stack(StackEst, stackPred)
+formula_Pred <- y ~ -1 +offset(log(female))+Intercept+lihun+GDP+wenmang+nongcun+
+  f(ID, model = "iid") +
+  f(sp.field.pred, model = spde.pred)
+
+Mod_Pred <-  inla(formula_Pred,
+                  data = inla.stack.data(StackJoin, spde = spde.pred),
+                  family = "poisson",
+                  control.predictor = list(A = inla.stack.A(StackJoin),
+                                           compute = T,link = 1))
+
+index.pred <- inla.stack.index(StackJoin, "Pred")$data
+post.mean.pred <- Mod_Pred$summary.fitted.values[index.pred, "mean"]
+post.sd.pred<-Mod_Pred$summary.fitted.values[index.pred, "sd"]
+#we calculate the actual coverage probability of a prediction interval with nominal coverage probability 95%
+validation = list()
+validation$res = test_data$inc- post.mean.pred
+validation$res.std = validation$res /
+  sqrt(post.sd.pred^2 + 1/Mod_Pred$summary.hyperpar[1,"mean"])
+validation$p = pnorm(validation$res.std)
+validation$cover = mean((validation$p>0.025) & (validation$p<0.975), na.rm=TRUE)
+#rmse
+rmse <- sqrt(mean((post.mean.pred - test_data$inc)^2))
+rmse<-sqrt(mean(validation$res^2, na.rm=TRUE))
+me<-mean(post.mean.pred - test_data$inc)
+mse<-mean((post.mean.pred - test_data$inc)^2)
+ci <- inla.hpdi(Mod_Pred$summary.random$ID, prob = 0.95)
+cv_results[[i]] <- post.mean.pred
+cv_test[[i]]<-test_data$inc
+cv_rmse[[i]]<-rmse
+cv_me[[i]]<-me
+}
+Z1<-data.frame(cv_test[[1]])
+Z2<-data.frame(cv_test[[2]])
+Z3<-data.frame(cv_test[[3]])
+Z4<-data.frame(cv_test[[4]])
+Z5<-data.frame(cv_test[[5]])
+Y1<-data.frame(cv_results[[1]])
+Y2<-data.frame(cv_results[[2]])
+Y3<-data.frame(cv_results[[3]])
+Y4<-data.frame(cv_results[[4]])
+Y5<-data.frame(cv_results[[5]])
+
+Y1$z<-Y1$cv_results..1..
+Z1<-Z1[,-c(1)]
+
+Z2$z<-Z2$cv_test..2..
+Z2<-Z2[,-c(1)]
+Z3$z<-Z3$cv_test..3..
+Z3<-Z3[,-c(1)]
+Z4$z<-Z4$cv_test..4..
+Z4<-Z4[,-c(1)]
+Z5$z<-Z5$cv_test..5..
+Z5<-Z5[,-c(1)]
+Z<-cbind(Z1,Z2,Z3,Z4,Z5)
+summary(Mod_Pred)
+library(data.table)
+fwrite(Y5,file= "C:/Users/86156/Desktop/Y5.csv")
+print(post.mean.pred)
+## prediction 367 sites
+rss <- sum((post.mean.pred - test_data$inc) ^ 2)
+tss <- sum((test_data$inc - mean(test_data$inc)) ^ 2)
+cv_results[[i]] <- 1-rss/tss
+post_mean_train=Mod_Point2$summary.fitted.values$mean
+post_mean_train<-post_mean_train[1:483]
+?tibble
+library(tibble)
+library(ggplot2)
+CV <- read_excel("C:/Users/86156/Desktop/CV.xlsx")
+pred_df=tibble(obs=CV$Zhen,
+               pre=CV$Yu)
+pred_df<-data.frame(pred_df)
+ggplot(data=pred_df, aes(x = obs, y = pre)) + 
+  geom_point()+
+  geom_smooth()+
+  labs(title="INLA-prediction") 
+
+cor.test(pred_df$obs,pred_df$pre)
