@@ -1,25 +1,17 @@
-#标化
-require(readxl)
-data1 <- read_excel("C:/Users/86156/Desktop/3212.xls")
-data1$sun2<-scale(data1$sun,center = T,scale=T)
-data1$temp2<-scale(data1$temp,center = T,scale = T)
-data1$water2<-scale(data1$water,center = T,scale=T)
-data1$education2<-scale(data1$education,center = T,scale=T)
-data1$GDP2<-scale(data1$GDP,center = T,scale=T)
-data1$pGDP2<-scale(data1$pGDP,center = T,scale=T)
-data1$cityout2<-scale(data1$cityout,center = T,scale=T)
-data1$PM2<-scale(data1$PM,center = T,scale=T)
-write.table (data1, file ="C:/Users/86156/Desktop/3212标化.csv",quote = F,sep=',')
-#相关性分析和多重共线性检验
+#导入数据
 require(readxl)   
-data1 <- read_excel("C:/Users/86156/Desktop/487最终.xlsx")
+data1 <- read_excel("数据集.xlsx")
+#探索性分析
+#发病率经过正态性检验，不服从正态分布，且存在过度离散，因此采用负二项回归
+#拟合单变量模型，检查因变量和自变量间的相关性（p<0.05）
+#由于负二项回归要求因变量需为正整数，因此以发病人数为因变量，通过offset函数利用人口数进行矫正
 library(lme4)
 library(MASS)
-#单变量分析，协变量排序
-mod1<-glm.nb(pinc~offset(log(female1))+third,data=data1)
+mod1<-glm.nb(incident_cases~offset(log(population))+X1,data=data1)
 summary(mod1)
-#多重共线性检验
-data2<-data1[,-c(1:13,15:18,20:23,26:28,30,36:38,40:70)]
+
+#多重共线性检验（相关性系数>0.8或vif>10）
+data2<-data1[,-c(1:13,15:18,20:23,26:28,30,36:38,40:70)]#删除无统计学意义的变量，即p值大于0.05
 library(corrplot)
 tdc<-cor(data2, method="pearson")
 testRes = cor.mtest(data2, method="pearson",conf.level = 0.95)
@@ -32,55 +24,61 @@ corrplot(tdc, method = "color",
 corrplot(tdc, method = "number", type = "lower", 
          tl.col = "n", tl.cex = 0.8, tl.pos = "n",order = 'AOE',
          add = T)
-corrplot(tdc,
-         method = "number", #设置相关性图展示类型
-         type = "lower", #设置只展示底部panel
-         bg = "white", #设置背景色
-         title = "mtcars data correlation", #设置标题
-)
-#vif
-mod1<-glm.nb(pinc~offset(log(female1))+mianji+nongcun+fifteenwenmang+gdp+lihun+sun,data=data1)
+#计算VIF值
+mod2<-glm.nb(incident_cases~offset(log(population))+X1+...+Xn,data=data1)
 library(car)
-Vif1<-vif(mod1)
+Vif1<-vif(mod2)
 Vif1
-#逐步回归
-mod2=glm.nb(pinc~offset(log(female1)),data=data1)
-biggest<-glm.nb(pinc~offset(log(female1))+mianji1+nongcun1+fifteenwenmang1+gdp1+lihun1+sun1,data=data1)
+
+#筛选变量
+#逐步回归（backward,forward,both三种方法)
+mod3=glm.nb(incident_cases~offset(log(population)),data=data1)#建立一个空模型
+biggest<-glm.nb(incident_cases~offset(log(population))+X1+...+Xn,data=data1)#建立一个全模型
 summary(biggest)
-step(mod2,direction="both",scope = biggest)
+step(mod3,direction="both",scope = biggest)
 fit<-step(biggest)
+
 #贝叶斯空间模型
+#对变量进行标化，转化为均值为0，标准差为1的连续变量
+data1$X1<-scale(data1$X1,center = T,scale=T)
+data1$Xn<-scale(data1$Xn,center = T,scale = T)
+#导出数据
+write.table (data1, file ="C:/Desktop/data1.csv",quote = F,sep=',')
+
 require(rgdal)
 require(readxl)
-Point_Data <- read_excel("C:/Users/86156/Desktop/487最终.xlsx")
+Point_Data <- read_excel("数据集.xlsx")
 dim(Point_Data)
-
 library(INLA)
 library(gstat)
 library(sf)
 library(raster)
-
-china<- readOGR("C:/Users/86156/Desktop/底图.shp")
+china<- readOGR("中国地图底图.shp")
 Loc <- cbind(Point_Data$Lon, Point_Data$Lat)
 Point <- SpatialPointsDataFrame(coords = Loc, data = Point_Data, match.ID = T,
                                 proj4string = CRS("+proj=longlat +datum=WGS84 +no_defs"))
 par(mfrow = c(1,1), mar = c(0,0,0,0))
 plot(Point, col = 2, pch = 16, cex = 0.7)
-#半变异函数
+#半变异函数，检验空间自相关
 coordinates(Point_Data) = ~Lat+Lon
-plot(variogram(inc~1,Point_Data))
-H<-variogram(inc~1,Point_Data)
+plot(variogram(incidence~1,Point_Data))
+H<-variogram(incidence~1,Point_Data)
 H
 plot(H, plot.line = TRUE)
 m <- fit.variogram(H,vgm(6,"Exp",4,7))
 plot(H, model=m)
 print(m)
+#利用半变异函数给出的变程值作为网格参数的参考依据
 range_parameter <- m$range
 range_parameter
 #Mesh网格的建立
 library(sf)
-boundary_shape <- st_read("C:/Users/86156/Desktop/边界1.shp")
+boundary_shape <- st_read("边界.shp")#为网格的构建设置边界，避免边际效应
 boundary_coords <- st_coordinates(boundary_shape)
+#网格选择的原则：顶点数越多三角网MESH越细密，反之越稀疏。顶点数越多MESH越
+能代表研究区域，但计算时间也越长。顶点数越少MESH越稀疏，计算时间越短。通常
+要构建几个三角网MESH，然后从中选择一个合适的或“最优的”，它平衡了计算时间
+与顶点数之间的矛盾。
 Mesh1 <- inla.mesh.2d(Loc,boundary = boundary_coords,offset=c(1,3),
                       max.edge = c(2,6),
                       cutoff =1 )
@@ -112,49 +110,39 @@ plot(Mesh3,asp = 1, main = "")
 points(Point, col = 2, pch = 16, cex = 0.7)
 
 #权重矩阵
-A_point <- inla.spde.make.A(Mesh2, loc = Loc)
+A_point <- inla.spde.make.A(Mesh3, loc = Loc)
 dim (A_point)
-spde=inla.spde2.matern(mesh=Mesh1,alpha = 2)#随机偏微分
+spde=inla.spde2.matern(mesh=Mesh3,alpha = 2)#随机偏微分
 spde$n.spde
-spde.pc   <- inla.spde2.pcmatern(Mesh2,                      
+#We can provide priors to the spatial term. 
+#A special kind of priors (penalised complexity or pc priors) can be imposed on the SPDE. 
+#These priors are widely used as they (as the name suggests) penalise the complexity of the model. 
+#In practice they shrink the spatial model towards the
+#base model (one without a spatial term). To do so we apply weakly informative priors that penalise small ranges and large variances.
+spde.pc   <- inla.spde2.pcmatern(Mesh3,                      
                                  prior.range = c(0.1,0.1),  
                                  prior.sigma = c(2,0.1))
 s.index=inla.spde.make.index(name="w",
                              n.spde = spde.pc$n.spde)
 str(s.index)
 #建立堆栈
-Xmianji <- model.matrix(~ -1 + mianji1, data = Point_Data)
-Xmj=data.frame(mianji1=Xmianji[,1])
+XX1 <- model.matrix(~ -1 + X1, data = Point_Data)
+X11=data.frame(X1=XX1[,1])
 N=nrow(Point_Data)
 N
 
-Xfemale <- model.matrix(~ -1 + female1, data = Point_Data)
-Xf=data.frame(female1=Xfemale[,1])
+Xpopulation <- model.matrix(~ -1 + population, data = Point_Data)
+Xpo=data.frame(population=Xpopulation[,1])
 N=nrow(Point_Data)
 N
 
-Xnongcun<-model.matrix(~-1+nongcun1,data=Point_Data)
-Xnc=data.frame(nongcun1=Xnongcun[,1])
+XX2<-model.matrix(~-1+X2,data=Point_Data)
+X22=data.frame(X2=XX2[,1])
 N=nrow(Point_Data)
 N
 
-XGDP <- model.matrix(~ -1 + gdp1, data = Point_Data)
-Xg=data.frame(gdp1=XGDP[,1])
-N=nrow(Point_Data)
-N
-
-Xfifteenwenmang <- model.matrix(~ -1 + fifteenwenmang1, data = Point_Data)
-Xwm=data.frame(fifteenwenmang1=Xfifteenwenmang[,1])
-N=nrow(Point_Data)
-N
-
-Xsun <- model.matrix(~ -1 + sun1, data = Point_Data)
-Xs=data.frame(sun1=Xsun[,1])
-N=nrow(Point_Data)
-N
-
-Xlihun<-model.matrix(~ -1 + lihun1, data = Point_Data)
-Xlh=data.frame(lihun1=Xlihun[,1])
+XXn <- model.matrix(~ -1 + Xn, data = Point_Data)
+Xnn=data.frame(Xn=XXn[,1])
 N=nrow(Point_Data)
 N
 
@@ -163,26 +151,20 @@ Xid=data.frame(ID=XID[,1])
 N=nrow(Point_Data)
 N
 
-Xarea<-model.matrix(~ -1+area,data = Point_Data)
-Xa=data.frame(area=Xarea[,1])
-
 stack.test=inla.stack(tag="test",
-                      data=list(y=Point_Data$pinc),
-                      A = list(1,1,1,1,1,1,1,1,1,1,A_point),
+                      data=list(y=Point_Data$incident_cases),
+                      A = list(1,1,1,1,1,1,A_point),
                       effects= list(
                         Intercept = rep(1, N),
-                        Xf=Xfemale,
-                        Xmj=Xmianji,
-                        Xnc=Xnongcun,
-                        Xg=XGDP,
-                        Xwm=Xfifteenwenmang,
+                        Xpo=Xpopulation,
+                        X1=XX1,
+                        X2=XX2,
+                        Xn=XXn,
                         Xid=XID,
-                        Xs=Xsun,
-                        Xlh=Xlihun,
-                        Xa=Xarea,
                         w = s.index))
 dim(inla.stack.A(stack.test))
-formula2 = y ~ -1+Intercept+offset(log(Xf))+f(w, model = spde)+f(Xid,model = "iid")+Xg+Xlh+Xnc+Xwm
+formula2 = y ~ -1+Intercept+offset(log(Xpo))+f(w, model = spde)+f(Xid,model = "iid")+X1+X2+Xn
+#利用ID解决过度离散
 Mod_Point2 <- inla(formula2,
                    data = inla.stack.data(stack.test, spde=spde.pc),
                    family="poisson",
@@ -195,39 +177,31 @@ A<-A[1:483]
 C<-data.frame(A)
 X<-mean((Point_Data$inc- C$A)^2)
 sqrt(X)
-#估计其他区域
+#估计全国范围内的发病率
 library(raster)
 library(sp)
 library(rgdal)
-china<- readOGR("C:/Users/86156/Desktop/Export_Output_2.shp")#用Arcgis添加女性人口制成shp文件
-china$gdp1<-as.numeric(china$gdp1)
-china$lihun1<-as.numeric(china$lihun1)
-china$nongcun1<-as.numeric(china$nongcun1)
-china$fifteenw_1<-as.numeric(china$fifteenw_1)
+china<- readOGR("中国大陆地图底图带数据.shp")
 r = raster(china, res=0.04) 
 
-shape_r = rasterize(china, r,"female1")
+shape_r = rasterize(china, r,"population")
 plot(shape_r)
 #plot(china,add=T)
-
 
 shape_r2 = rasterize(china,r,"ID")
 plot(shape_r2)
 #plot(china,add=T)
 
-shape_r3 = rasterize(china,r,"gdp1")
+shape_r3 = rasterize(china,r,"X1")
 plot(shape_r3)
 #plot(china,add=T)
 
-shape_r4 = rasterize(china,r,"lihun1")
+shape_r4 = rasterize(china,r,"X2")
 plot(shape_r4)
 #plot(china,add=T)
 
-shape_r5 = rasterize(china,r,"nongcun1")
+shape_r5 = rasterize(china,r,"Xn")
 plot(shape_r5)
-
-shape_r6 = rasterize(china,r,"fifteenw_1")
-plot(shape_r6)
 
 dp <- rasterToPoints(shape_r)
 dim(dp)
@@ -239,38 +213,20 @@ dp4<-rasterToPoints(shape_r4)
 dim(dp4)
 dp5<-rasterToPoints(shape_r5)
 dim(dp5)
-dp6<-rasterToPoints(shape_r6)
-dim(dp6)
-#转换成2km*2km的栅格图
-#ra <- aggregate(shape_r, fact = 2, fun = mean)
-#ra2<-aggregate(shape_r2,fact=2,fun=mean)
-#ra3 <- aggregate(shape_r3, fact = 2, fun = mean)
-#ra4<-aggregate(shape_r4,fact=2,fun=mean)
-#ra5<-aggregate(shape_r5,fact=2,fun=mean)
-#ra6<-aggregate(shape_r6,fact=2,fun=mean)
-#ra7<-aggregate(shape_r7,fact=2,fun=mean)
-#栅格点的数目
-#dp <- rasterToPoints(ra)
-#dim(dp)
-#dp2<- rasterToPoints(ra2)
-#dim(dp2)
-#dp3<- rasterToPoints(ra3)
-#dim(dp3)
-#dp4<- rasterToPoints(ra4)
-#dim(dp4)
-#dp5<- rasterToPoints(ra5)
-#dim(dp5)
+
 #栅格点质心的xy坐标
 coop <- dp[, c("x", "y")]
-#将栅格的坐标于mesh网格合并
-Ap <- inla.spde.make.A(mesh = Mesh2, loc = coop)
+
+#将栅格的坐标与mesh网格合并
+Ap <- inla.spde.make.A(mesh = Mesh3, loc = coop)
 
 # stack for estimation stk.e
 stk.e <- inla.stack(
   tag = "est",
-  data = list(y = Point_Data$pinc),
+  data = list(y = Point_Data$incident_cases),
   A = list(1,A_point),
-  effects = list(data.frame(Intercept= rep(1,483),  female=Point_Data$female1,ID=Point_Data$ID,gdp=Point_Data$gdp1,lihun=Point_Data$lihun1,nongcun=Point_Data$nongcun1,wenmang=Point_Data$fifteenwenmang1), w = s.index))
+  effects = list(data.frame(Intercept= rep(1,483),  population=Point_Data$population,ID=Point_Data$ID,X1=Point_Data$X1,
+X2=Point_Data$X2,Xn=Point_Data$Xn), w = s.index))
 
 # stack for prediction stk.p
 stk.p <- inla.stack(
