@@ -1,20 +1,41 @@
-#Variable standardization
-require(readxl)
-data1 <- read_excel("C:/ ")
-data1$var1<-scale(data1$var1,center = T,scale=T)
-data1$var2<-scale(data1$var2,center = T,scale = T)
-data1$var3<-scale(data1$var3,center = T,scale=T)
-data1$varn<-scale(data1$varn,center = T,scale=T)
-write.table (data1, file ="C:/ .csv",quote = F,sep=',')
+#Sample data
+# Set random seeds to ensure reproducibility
+set.seed(123)
+# Generate data for 50 regions
+n <- 50
+longitude <- runif(n, min = 100, max = 120) #Randomly generated longitude (assuming a range between 100 and 120)
+latitude <- runif(n, min = 20, max = 40) #Randomly generated latitude (assuming a range between 20 and 40)
+cases <- sample(100:1000, n, replace = TRUE) # Randomly generated incidence number (assuming the number of cases is between 100 and 1000)
+population <- sample(1:10, n, replace = TRUE) # Randomly generated population (assuming the population is between 1 and 10) (The unit is 100,000)
+gdp <- runif(n, min = 1e4, max = 1e6) # Randomly generated GDP (assuming GDP is between 1e4 and 1e6)
+education<-sample(6:12, n, replace = TRUE)#Randomly generated years of schooling
+ID<-sample(1:50, n, replace = TRUE)
+# Merge all your data into a single data frame
+data <- data.frame(
+  Lon = longitude,
+  Lat = latitude,
+  Cases = cases,
+  Population = population,
+  GDP = gdp,
+  edu = education,
+  ID = ID
+)
+# Look at the first few rows of data
+head(data)
 
+#Variable standardization
+data$GDP<-scale(data$GDP,center = T,scale=T)
+data$edu<-scale(data$edu,center = T,scale=T)
 #Univariate model
 library(lme4)
 library(MASS)
-mod<-glm.nb(incident_cases~offset(log(population))+var1,data=data1)
+mod1<-glm.nb(Cases~offset(log(Population))+GDP,data=data)
+mod2<-glm.nb(Cases~offset(log(Population))+edu,data=data)
 
 #Multicollinearity test
 #Correlation analysis
 library(corrplot)
+data2<-data[,-c(1,2,3,4,7)]#Only covariate data is retained
 tdc<-cor(data2, method="pearson") #data2 represents statistically significant variables.
 testRes = cor.mtest(data2, method="pearson",conf.level = 0.95)
 par(mar=c(5, 4, 4, 2) + 0.1)
@@ -27,96 +48,113 @@ corrplot(tdc, method = "number", type = "lower",
          tl.col = "n", tl.cex = 0.1, tl.pos = "n",order = 'AOE',number.cex = 0.5,
          add = T)
 #Variance Inflation Factor
-mod1<-glm.nb(incident_cases~offset(log(population))+var1+var2+varn,data=data1)
 library(car)
+mod3<-glm.nb(Cases~offset(log(Population))+GDP+edu,data=data)
+vif(mod3)
 
 #Stepwise regression
-mod2=glm.nb(incident_cases~offset(log(population)),data=data1)
-biggest<-glm.nb(incident_cases~offset(log(population))+var1+var2+varn,data=data1)
+mod4=glm.nb(Cases~offset(log(Population)),data=data)
+biggest<-glm.nb(Cases~offset(log(Population))+GDP+edu,data=data)#Add variables that pass the multicollinearity test
 summary(biggest)
-step(mod2,direction="both",scope = biggest)
+step(mod4,direction="both",scope = biggest)
 fit<-step(biggest)
 
 #INLA-SPDE
+#Load the program package
 require(rgdal)
 require(readxl)
-library(INLA)
+library(INLA) ##INLA 22.12.16
 library(gstat)
 library(sf)
 library(raster)
-Point_Data <- read_excel("C:/ .xlsx") #cancer registration data
-dim(Point_Data)
-china<- readOGR("C:/.shp") #Base map
+# Create a sample SHP file
+n <- 100
+longitude1 <- runif(n, min = 90, max = 130)
+latitude1 <- runif(n, min = 15, max = 45)
+Population1 <- sample(1:15, n, replace = TRUE)
+gdp1 <- runif(n, min = 1e3, max = 1e7)
+education1 <- sample(6:12, n, replace = TRUE)
+ID1<-sample(1:100, n, replace = TRUE)
+# Create simple geographic data frames
+geo_data <- data.frame(
+  id = 1:100,
+  Lon = longitude1,
+  Lat = latitude1,
+  Population = Population1,
+  GDP = gdp1,
+  edu = education1,
+  ID = ID1
+)
+geo_data$GDP<- scale(geo_data$GDP,center = T,scale=T)
+geo_data$edu<- scale(geo_data$edu,center = T,scale=T)
+# Convert the data frame to an sf object (specify the coordinate system, WGS84 is the commonly used geographic coordinate system)
+geo_sf <- st_as_sf(geo_data, coords = c("Lon", "Lat"), crs = 4326)
+# Save as a Shapefile
+st_write(geo_sf, "my_points.shp")
+Point_Data<-data
+Map<- readOGR("my_points.shp") #Base map
 Loc <- cbind(Point_Data$Lon, Point_Data$Lat)
 Point <- SpatialPointsDataFrame(coords = Loc, data = Point_Data, match.ID = T,
                                 proj4string = CRS("+proj=longlat +datum=WGS84 +no_defs"))
 par(mfrow = c(1,1), mar = c(0,0,0,0))
 plot(Point, col = 2, pch = 16, cex = 0.7)
+
 #Semivariogram
+Point_Data$incidence<-Point_Data$Cases/Point_Data$Population
 coordinates(Point_Data) = ~Lat+Lon
 plot(variogram(incidence~1,Point_Data))
 H<-variogram(incidence~1,Point_Data)
 plot(H, plot.line = TRUE)
-m <- fit.variogram(H,vgm(,"Sph",,))
+m <- fit.variogram(H,vgm(,"Exp",,))
 plot(H, model=m)
 range_parameter <- m$range
 range_parameter
+
 #Establishment of mesh grid
 library(sf)
-boundary_shape <- st_read("C:/.shp") #National boundaries
-boundary_coords <- st_coordinates(boundary_shape)
-Mesh1 <- inla.mesh.2d(Loc,offset=c(,),boundary = boundary_coords,
-                      max.edge = c(,),
-                      cutoff = )
+Mesh1 <- inla.mesh.2d(Loc,offset=c(1,2),
+                      max.edge = c(1,2),
+                      cutoff = 0.5)
 par(mfrow = c(2,2), mar = c(1,1,1,1))
 plot(Mesh1,asp = 1, main = "Mesh1")
 points(Loc, col = 2, pch = 16, cex = 0.5)
 
-Mesh2 <- inla.mesh.2d(Loc,boundary = boundary_coords,offset=c(,),
-                      max.edge = c(,),
-                      cutoff = )
+Mesh2 <- inla.mesh.2d(Loc,offset=c(1,2),
+                      max.edge = c(1,3),
+                      cutoff = 0.7)
 plot(Mesh2,asp = 1, main = "")
 points(Loc, col = 2, pch = 16, cex = 0.5)
-Mesh3 <- inla.mesh.2d(Loc,boundary = boundary_coords,offset = c(,),
-                      max.edge = c(,),
-                      cutoff = )
+Mesh3 <- inla.mesh.2d(Loc,offset = c(1,2),
+                      max.edge = c(1,2),
+                      cutoff = 1)
 plot(Mesh3,asp = 1, main = "")
-points(Loc, col = 2, pch = 16, cex = 0.5)
-Mesh4 <- inla.mesh.2d(Loc,boundary = boundary_coords,offset = c(,),
-                      max.edge = c(,),
-                      cutoff = 
-                      )
-plot(Mesh4,asp = 1, main = "")
 points(Loc, col = 2, pch = 16, cex = 0.5)
 
 par(mfrow = c(1,1), mar = c(1,1,1,1))
 plot(Mesh2,asp = 1, main = "")
 points(Point, col = 2, pch = 16, cex = 0.7)
+
 #Weight matrix
 A_point <- inla.spde.make.A(Mesh2, loc = Loc)
 dim (A_point)
 #Prior
 spde.pc   <- inla.spde2.pcmatern(Mesh2,                      
                                  prior.range = c(0.1,0.1),  
-                                 prior.sigma = c(10,0.1))
+                                 prior.sigma = c(5,0.1))
 s.index=inla.spde.make.index(name="w",
                              n.spde = spde.pc$n.spde)
 str(s.index)
 #Establish a stack
-Xpopulation<- model.matrix(~ -1 + population, data = Point_Data)
-Xp=data.frame(population=Xpopulation[,1])
+Xpopulation<- model.matrix(~ -1 + Population, data = Point_Data)
+Xp=data.frame(Population=Xpopulation[,1])
 N=nrow(Point_Data)
 N
-Xvar1<- model.matrix(~ -1 + var1, data = Point_Data)
-Xv1=data.frame(var1=Xvar1[,1])
+XGDP<- model.matrix(~ -1 + GDP, data = Point_Data)
+XG=data.frame(GDP=XGDP[,1])
 N=nrow(Point_Data)
 N
-Xvar2 <- model.matrix(~ -1 + var2, data = Point_Data)
-Xv2=data.frame(var2=Xvar2[,1])
-N=nrow(Point_Data)
-N
-Xvarn <- model.matrix(~ -1 + varn, data = Point_Data)
-Xvn=data.frame(varn=Xvarn[,1])
+Xedu<- model.matrix(~ -1 + edu, data = Point_Data)
+Xe=data.frame(edu=Xedu[,1])
 N=nrow(Point_Data)
 N
 XID<-model.matrix(~ -1 + ID, data = Point_Data)
@@ -125,19 +163,18 @@ N=nrow(Point_Data)
 N
 
 stack.test=inla.stack(tag="test",
-                      data=list(y=Point_Data$incident_cases),
-                      A = list(1,1,1,1,1,1,A_point),
+                      data=list(y=Point_Data$Cases),
+                      A = list(1,1,1,1,1,A_point),
                       effects= list(
                         Intercept = rep(1, N),
                         Xp=Xpopulation,
-                        Xv1=Xvar1,
-                        Xv2=Xvar2,
-                        Xvn=Xvarn,
+                        XG=XGDP,
+                        Xe=Xedu,
                         Xid=XID,
                         w = s.index))
 dim(inla.stack.A(stack.test))
 
-formula2 = y ~ -1+Intercept+offset(log(Xp))+f(w, model = spde)+f(Xid,model = "iid")+Xv1+Xv2+Xvn
+formula2 = y ~ -1+Intercept+offset(log(Xp))+f(w, model = spde)+f(Xid,model = "iid")+XG+Xe
 Mod_Point2 <- inla(formula2,
                    data = inla.stack.data(stack.test, spde=spde.pc),
                    family="poisson",
@@ -146,27 +183,26 @@ Mod_Point2 <- inla(formula2,
                                             compute = T))
 summary(Mod_Point2)
 
-#Estimate for all districts and counties nationwide
+##Estimate for all districts and counties nationwide
 library(raster)
 library(sp)
 library(rgdal)
-china<- readOGR("C:/.shp") #Base map with correlated variables
-r = raster(china, res=0.04) 
+Map<- readOGR("my_points.shp") #Base map with correlated variables
+r = raster(Map, res=0.05) 
 #Feature to raster
-shape_r = rasterize(china, r,"population")
+shape_r = rasterize(Map, r,"Population")
 plot(shape_r)
-plot(china,add=T)
-shape_r2 = rasterize(china,r,"ID")
+plot(Map,add=T)
+shape_r2 = rasterize(Map,r,"ID_1")
 plot(shape_r2)
-plot(china,add=T)
-shape_r3 = rasterize(china,r,"var1")
+plot(Map,add=T)
+shape_r3 = rasterize(Map,r,"GDP")
 plot(shape_r3)
-plot(china,add=T)
-shape_r4 = rasterize(china,r,"var2")
+plot(Map,add=T)
+shape_r4 = rasterize(Map,r,"edu")
 plot(shape_r4)
-plot(china,add=T)
-shape_r5 = rasterize(china,r,"varn")
-plot(shape_r5)
+plot(Map,add=T)
+
 #Raster to point conversion
 dp <- rasterToPoints(shape_r)
 dim(dp)
@@ -176,8 +212,7 @@ dp3<-rasterToPoints(shape_r3)
 dim(dp3)
 dp4<-rasterToPoints(shape_r4)
 dim(dp4)
-dp5<-rasterToPoints(shape_r5)
-dim(dp5)
+
 #XY coordinates of raster cell centroids
 coop <- dp[, c("x", "y")]
 
@@ -185,27 +220,26 @@ Ap <- inla.spde.make.A(mesh = Mesh2, loc = coop)
 # stack for estimation stk.e
 stk.e <- inla.stack(
   tag = "est",
-  data = list(y = Point_Data$incident_cases),
+  data = list(y = Point_Data$Cases),
   A = list(1,A_point),
-  effects = list(data.frame(Intercept= rep(1,483),  population=Point_Data$population,ID=Point_Data$ID,var1=Point_Data$var1,var2=Point_Data$var2,varn=Point_Data$varn), w = s.index))
-
+  effects = list(data.frame(Intercept= rep(1,50),  population=Point_Data$Population,ID=Point_Data$ID,GDP=Point_Data$GDP,edu=Point_Data$edu), w = s.index))
 # stack for prediction stk.p
 stk.p <- inla.stack(
   tag = "pred",
   data = list(y = NA),
   A = list(1, Ap),
-  effects = list(data.frame(Intercept= rep(1,599225), population = dp[, 3],ID=dp2[,3],var1=dp3[,3],var2=dp4[,3],varn=dp5[,3]),w = s.index ))
+  effects = list(data.frame(Intercept= rep(1,100), population = dp[, 3],ID=dp2[,3],GDP=dp3[,3],edu=dp4[,3]),w = s.index ))
 
 stk.full <- inla.stack(stk.e, stk.p)
 #Model
-formula1 <- y ~ -1 +offset(log(population))+ Intercept+f(w, model = spde.pc)+f(ID,model = "iid")+var1+var2+varn
+formula1 <- y ~ -1 +offset(log(population))+ Intercept+f(w, model = spde.pc)+f(ID,model = "iid")+GDP+edu
 res <-inla(formula1,
-            family = "poisson",
-            data = inla.stack.data(stk.full),
-            control.compute = list(dic=TRUE, cpo=TRUE, waic=TRUE),
-            control.predictor = list(
-              compute = TRUE, link = 1,
-              A = inla.stack.A(stk.full)))
+           family = "poisson",
+           data = inla.stack.data(stk.full),
+           control.compute = list(dic=TRUE, cpo=TRUE, waic=TRUE),
+           control.predictor = list(
+             compute = TRUE, link = 1,
+             A = inla.stack.A(stk.full)))
 summary(res)
 
 index <- inla.stack.index(stack = stk.full, tag = "pred")$data
@@ -243,24 +277,22 @@ incidence<-ggplot(dpm) + geom_tile(aes(east, north, fill = value)) +
     low = "blue", high = "orange"
   ) +
   theme_bw()
-
 plot(incidence)
-library(data.table)
-fwrite(dpm, file = "C:/.csv") #Export the data
 
 #Sensitivity analysis
-range_params <- c(0.05, 0.1, 0.2, 0.5, 1,1.5,2,3,4,5)
-sigma_params <- c(0.1, 0.5, 1, 2, 4,6,7,8,9,10) 
+range_params <- c(0.05, 0.1, 0.2, 0.5, 1)
+sigma_params <- c(0.1, 0.5, 1, 2, 5) 
+results <- expand.grid(range=range_params, sigma=sigma_params)
 for(i in seq(nrow(results))){
   range_val <- results$range[i]
   sigma_val <- results$sigma[i]
   
-  spde_model <- inla.spde2.pcmatern(Mesh1, 
+  spde_model <- inla.spde2.pcmatern(Mesh2, 
                                     prior.range = c(range_val, 0.1), 
                                     prior.sigma = c(sigma_val, 0.1))
   
   # Defining the model formula
-  formula2 = y ~ -1+offset(log(Xp))+Intercept+f(w, model = spde)+f(Xid,model = "iid")+Xv1+Xv2+Xvn
+  formula2 = y ~ -1+offset(log(Xp))+Intercept+f(w, model = spde)+f(Xid,model = "iid")+XG+Xe
   
   # Fitting an INLA-SPDE model
   fit <- inla(formula2,
@@ -286,71 +318,69 @@ cv_me<-vector("list", 5)
 cv_mse<-vector("list", 5)
 cv_cover<-vector("list", 5)
 for(i in 1:5){
-train_data <- Point_Data[fold_indices != i, ]
-test_data <- Point_Data[fold_indices == i, ]
-MeshPred <- inla.mesh.2d(Loc, offset = c(, ),
-                         max.edge = c(,),
-                         cutoff = )
-spde.pred <- inla.spde2.pcmatern(MeshPred,                      
-                                 prior.range = c(0.1,0.1),  
-                                 prior.sigma = c(10,0.1))
-s.index.p <- inla.spde.make.index(name = "sp.field.pred",
-                                  n.spde = spde.pred$n.spde)
-Locy<- cbind(train_data$Lon, train_data$Lat)
-A_est  <- inla.spde.make.A(mesh = MeshPred,loc=Locy)
-Locyt<- cbind(test_data$Lon, test_data$Lat)
-A_pred <- inla.spde.make.A(mesh = MeshPred,loc=Locyt)
-N=nrow(train_data)
-M=nrow(test_data)
-StackEst <- inla.stack( tag = "Est",
-  data = list(y = train_data$incident_cases),
-                       A = list(1,1,1,1,1,A_est),
-                       effects = list(Intercept=rep(1,N),
-                                      population = train_data$population,
-                                           var1=train_data$var1,
-                                           var2=train_data$var2,
-                                           varn=train_data$varn,
-                                           ID=train_data$ID,
-                                           sp.field.pred=s.index.p))
-
-stackPred <- inla.stack(tag = "Pred",
-  data = list(y = NA),  # NAs in the response variable  
-                        A = list(1,1,1,1,1,A_pred),
-                        effects = list(Intercept=rep(1,M),
-                                       population = test_data$population,
-                                       var1=test_data$var1,
-                                       var2=test_data$var2,
-                                       varn=test_data$varn,
-                                       ID=test_data$ID,
-                                       sp.field.pred=s.index.p))
-
-StackJoin <- inla.stack(StackEst, stackPred)
-formula_Pred <- y ~ -1 +offset(log(population))+Intercept+var1+var2+varn+
-  f(ID, model = "iid") +
-  f(sp.field.pred, model = spde.pred)
-Mod_Pred <-  inla(formula_Pred,
-                  data = inla.stack.data(StackJoin, spde = spde.pred),
-                  family = "poisson",
-                  control.predictor = list(A = inla.stack.A(StackJoin),
-                                           compute = T,link = 1))
-
-index.pred <- inla.stack.index(StackJoin, "Pred")$data
-post.mean.pred <- Mod_Pred$summary.fitted.values[index.pred, "mean"]
-post.sd.pred<-Mod_Pred$summary.fitted.values[index.pred, "sd"]
-#we calculate the actual coverage probability of a prediction interval with nominal coverage probability 95%
-validation = list()
-validation$res = test_data$inc1- post.mean.pred
-validation$res.std = validation$res /
-  sqrt(post.sd.pred^2 + 1/Mod_Pred$summary.hyperpar[1,"mean"])
-validation$p = pnorm(validation$res.std)
-validation$cover = mean((validation$p>0.025) & (validation$p<0.975), na.rm=TRUE)
-cv_cover[[i]]<-validation$cover
-rmse<-sqrt(mean(validation$res^2, na.rm=TRUE))
-me<-mean(post.mean.pred - test_data$inc1)
-mse<-mean((post.mean.pred - test_data$inc1)^2)
-cv_results[[i]] <- post.mean.pred
-cv_test[[i]]<-test_data$inc
-cv_rmse[[i]]<-rmse
-cv_me[[i]]<-me
-cv_mse[[i]]<-mse
+  train_data <- Point_Data[fold_indices != i, ]
+  test_data <- Point_Data[fold_indices == i, ]
+  MeshPred <- inla.mesh.2d(Loc, offset = c(1,2),
+                           max.edge = c(1,3),
+                           cutoff = 0.7 )
+  spde.pred <- inla.spde2.pcmatern(MeshPred,                      
+                                   prior.range = c(0.1,0.1),  
+                                   prior.sigma = c(1,0.1))
+  s.index.p <- inla.spde.make.index(name = "sp.field.pred",
+                                    n.spde = spde.pred$n.spde)
+  Locy<- cbind(train_data$Lon, train_data$Lat)
+  A_est  <- inla.spde.make.A(mesh = MeshPred,loc=Locy)
+  Locyt<- cbind(test_data$Lon, test_data$Lat)
+  A_pred <- inla.spde.make.A(mesh = MeshPred,loc=Locyt)
+  N=nrow(train_data)
+  M=nrow(test_data)
+  StackEst <- inla.stack( tag = "Est",
+                          data = list(y = train_data$Cases),
+                          A = list(1,1,1,1,1,A_est),
+                          effects = list(Intercept=rep(1,N),
+                                         population = train_data$Population,
+                                         GDP=train_data$GDP,
+                                         edu=train_data$edu,
+                                         ID=train_data$ID,
+                                         sp.field.pred=s.index.p))
+  
+  stackPred <- inla.stack(tag = "Pred",
+                          data = list(y = NA),  # NAs in the response variable  
+                          A = list(1,1,1,1,1,A_pred),
+                          effects = list(Intercept=rep(1,M),
+                                         population = test_data$Population,
+                                         GDP=test_data$GDP,
+                                         edu=test_data$edu,
+                                         ID=test_data$ID,
+                                         sp.field.pred=s.index.p))
+  
+  StackJoin <- inla.stack(StackEst, stackPred)
+  formula_Pred <- y ~ -1 +offset(log(population))+Intercept+GDP+edu+
+    f(ID, model = "iid") +
+    f(sp.field.pred, model = spde.pred)
+  Mod_Pred <-  inla(formula_Pred,
+                    data = inla.stack.data(StackJoin, spde = spde.pred),
+                    family = "poisson",
+                    control.predictor = list(A = inla.stack.A(StackJoin),
+                                             compute = T,link = 1))
+  
+  index.pred <- inla.stack.index(StackJoin, "Pred")$data
+  post.mean.pred <- Mod_Pred$summary.fitted.values[index.pred, "mean"]
+  post.sd.pred<-Mod_Pred$summary.fitted.values[index.pred, "sd"]
+  #we calculate the actual coverage probability of a prediction interval with nominal coverage probability 95%
+  validation = list()
+  validation$res = test_data$incidence- post.mean.pred
+  validation$res.std = validation$res /
+    sqrt(post.sd.pred^2 + 1/Mod_Pred$summary.hyperpar[1,"mean"])
+  validation$p = pnorm(validation$res.std)
+  validation$cover = mean((validation$p>0.025) & (validation$p<0.975), na.rm=TRUE)
+  cv_cover[[i]]<-validation$cover
+  rmse<-sqrt(mean(validation$res^2, na.rm=TRUE))
+  me<-mean(post.mean.pred - test_data$incidence)
+  mse<-mean((post.mean.pred - test_data$incidence)^2)
+  cv_results[[i]] <- post.mean.pred
+  cv_test[[i]]<-test_data$inc
+  cv_rmse[[i]]<-rmse
+  cv_me[[i]]<-me
+  cv_mse[[i]]<-mse
 }
