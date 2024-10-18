@@ -1,41 +1,19 @@
-#Sample data
-# Set random seeds to ensure reproducibility
-set.seed(123)
-# Generate data for 50 regions
-n <- 50
-longitude <- runif(n, min = 100, max = 120) #Randomly generated longitude (assuming a range between 100 and 120)
-latitude <- runif(n, min = 20, max = 40) #Randomly generated latitude (assuming a range between 20 and 40)
-cases <- sample(100:1000, n, replace = TRUE) # Randomly generated incidence number (assuming the number of cases is between 100 and 1000)
-population <- sample(1:10, n, replace = TRUE) # Randomly generated population (assuming the population is between 1 and 10) (The unit is 100,000)
-gdp <- runif(n, min = 1e4, max = 1e6) # Randomly generated GDP (assuming GDP is between 1e4 and 1e6)
-education<-sample(6:12, n, replace = TRUE)#Randomly generated years of schooling
-ID<-sample(1:50, n, replace = TRUE)
-# Merge all your data into a single data frame
-data <- data.frame(
-  Lon = longitude,
-  Lat = latitude,
-  Cases = cases,
-  Population = population,
-  GDP = gdp,
-  edu = education,
-  ID = ID
-)
-# Look at the first few rows of data
-head(data)
-
+#Example
+library(readxl)
+data<-read_excel("cancer registration.xlsx")
 #Variable standardization
 data$GDP<-scale(data$GDP,center = T,scale=T)
-data$edu<-scale(data$edu,center = T,scale=T)
+data$Education<-scale(data$Education,center = T,scale=T)
 #Univariate model
 library(lme4)
 library(MASS)
 mod1<-glm.nb(Cases~offset(log(Population))+GDP,data=data)
-mod2<-glm.nb(Cases~offset(log(Population))+edu,data=data)
+mod2<-glm.nb(Cases~offset(log(Population))+Education,data=data)
 
 #Multicollinearity test
 #Correlation analysis
 library(corrplot)
-data2<-data[,-c(1,2,3,4,7)]#Only covariate data is retained
+data2<-data[,-c(1:6)]#Only covariate data is retained
 tdc<-cor(data2, method="pearson") #data2 represents statistically significant variables.
 testRes = cor.mtest(data2, method="pearson",conf.level = 0.95)
 par(mar=c(5, 4, 4, 2) + 0.1)
@@ -49,12 +27,12 @@ corrplot(tdc, method = "number", type = "lower",
          add = T)
 #Variance Inflation Factor
 library(car)
-mod3<-glm.nb(Cases~offset(log(Population))+GDP+edu,data=data)
+mod3<-glm.nb(Cases~offset(log(Population))+GDP+Education,data=data)
 vif(mod3)
 
 #Stepwise regression
 mod4=glm.nb(Cases~offset(log(Population)),data=data)
-biggest<-glm.nb(Cases~offset(log(Population))+GDP+edu,data=data)#Add variables that pass the multicollinearity test
+biggest<-glm.nb(Cases~offset(log(Population))+GDP+Education,data=data)#Add variables that pass the multicollinearity test
 summary(biggest)
 step(mod4,direction="both",scope = biggest)
 fit<-step(biggest)
@@ -62,48 +40,23 @@ fit<-step(biggest)
 #INLA-SPDE
 #Load the program package
 require(rgdal)
-require(readxl)
-library(INLA) ##INLA 22.12.16
+library(INLA) 
 library(gstat)
 library(sf)
 library(raster)
-# Create a sample SHP file
-n <- 100
-longitude1 <- runif(n, min = 90, max = 130)
-latitude1 <- runif(n, min = 15, max = 45)
-Population1 <- sample(1:15, n, replace = TRUE)
-gdp1 <- runif(n, min = 1e3, max = 1e7)
-education1 <- sample(6:12, n, replace = TRUE)
-ID1<-sample(1:100, n, replace = TRUE)
-# Create simple geographic data frames
-geo_data <- data.frame(
-  id = 1:100,
-  Lon = longitude1,
-  Lat = latitude1,
-  Population = Population1,
-  GDP = gdp1,
-  edu = education1,
-  ID = ID1
-)
-geo_data$GDP<- scale(geo_data$GDP,center = T,scale=T)
-geo_data$edu<- scale(geo_data$edu,center = T,scale=T)
-# Convert the data frame to an sf object (specify the coordinate system, WGS84 is the commonly used geographic coordinate system)
-geo_sf <- st_as_sf(geo_data, coords = c("Lon", "Lat"), crs = 4326)
-# Save as a Shapefile
-st_write(geo_sf, "my_points.shp")
+# Loading data
 Point_Data<-data
 Map<- readOGR("my_points.shp") #Base map
 Loc <- cbind(Point_Data$Lon, Point_Data$Lat)
 Point <- SpatialPointsDataFrame(coords = Loc, data = Point_Data, match.ID = T,
                                 proj4string = CRS("+proj=longlat +datum=WGS84 +no_defs"))
 par(mfrow = c(1,1), mar = c(0,0,0,0))
-plot(Point, col = 2, pch = 16, cex = 0.7)
+plot(Point, col = 2, pch = 16, cex = 1)
 
 #Semivariogram
-Point_Data$incidence<-Point_Data$Cases/Point_Data$Population
 coordinates(Point_Data) = ~Lat+Lon
-plot(variogram(incidence~1,Point_Data))
-H<-variogram(incidence~1,Point_Data)
+plot(variogram(Incidence~1,Point_Data))
+H<-variogram(Incidence~1,Point_Data)
 plot(H, plot.line = TRUE)
 m <- fit.variogram(H,vgm(,"Exp",,))
 plot(H, model=m)
@@ -117,22 +70,22 @@ Mesh1 <- inla.mesh.2d(Loc,offset=c(1,2),
                       cutoff = 0.5)
 par(mfrow = c(2,2), mar = c(1,1,1,1))
 plot(Mesh1,asp = 1, main = "Mesh1")
-points(Loc, col = 2, pch = 16, cex = 0.5)
+points(Loc, col = 2, pch = 16, cex = 1)
 
 Mesh2 <- inla.mesh.2d(Loc,offset=c(1,2),
                       max.edge = c(1,3),
                       cutoff = 0.7)
 plot(Mesh2,asp = 1, main = "")
-points(Loc, col = 2, pch = 16, cex = 0.5)
+points(Loc, col = 2, pch = 16, cex = 1)
 Mesh3 <- inla.mesh.2d(Loc,offset = c(1,2),
                       max.edge = c(1,2),
                       cutoff = 1)
 plot(Mesh3,asp = 1, main = "")
-points(Loc, col = 2, pch = 16, cex = 0.5)
+points(Loc, col = 2, pch = 16, cex = 1)
 
 par(mfrow = c(1,1), mar = c(1,1,1,1))
 plot(Mesh2,asp = 1, main = "")
-points(Point, col = 2, pch = 16, cex = 0.7)
+points(Point, col = 2, pch = 16, cex = 1)
 
 #Weight matrix
 A_point <- inla.spde.make.A(Mesh2, loc = Loc)
@@ -153,8 +106,8 @@ XGDP<- model.matrix(~ -1 + GDP, data = Point_Data)
 XG=data.frame(GDP=XGDP[,1])
 N=nrow(Point_Data)
 N
-Xedu<- model.matrix(~ -1 + edu, data = Point_Data)
-Xe=data.frame(edu=Xedu[,1])
+Xedu<- model.matrix(~ -1 + Education, data = Point_Data)
+Xe=data.frame(Education=Xedu[,1])
 N=nrow(Point_Data)
 N
 XID<-model.matrix(~ -1 + ID, data = Point_Data)
@@ -199,7 +152,7 @@ plot(Map,add=T)
 shape_r3 = rasterize(Map,r,"GDP")
 plot(shape_r3)
 plot(Map,add=T)
-shape_r4 = rasterize(Map,r,"edu")
+shape_r4 = rasterize(Map,r,"Education")
 plot(shape_r4)
 plot(Map,add=T)
 
@@ -222,7 +175,7 @@ stk.e <- inla.stack(
   tag = "est",
   data = list(y = Point_Data$Cases),
   A = list(1,A_point),
-  effects = list(data.frame(Intercept= rep(1,50),  population=Point_Data$Population,ID=Point_Data$ID,GDP=Point_Data$GDP,edu=Point_Data$edu), w = s.index))
+  effects = list(data.frame(Intercept= rep(1,50),  population=Point_Data$Population,ID=Point_Data$ID,GDP=Point_Data$GDP,edu=Point_Data$Education), w = s.index))
 # stack for prediction stk.p
 stk.p <- inla.stack(
   tag = "pred",
@@ -340,7 +293,7 @@ for(i in 1:5){
                           effects = list(Intercept=rep(1,N),
                                          population = train_data$Population,
                                          GDP=train_data$GDP,
-                                         edu=train_data$edu,
+                                         edu=train_data$Education,
                                          ID=train_data$ID,
                                          sp.field.pred=s.index.p))
   
@@ -350,7 +303,7 @@ for(i in 1:5){
                           effects = list(Intercept=rep(1,M),
                                          population = test_data$Population,
                                          GDP=test_data$GDP,
-                                         edu=test_data$edu,
+                                         edu=test_data$Education,
                                          ID=test_data$ID,
                                          sp.field.pred=s.index.p))
   
@@ -369,18 +322,20 @@ for(i in 1:5){
   post.sd.pred<-Mod_Pred$summary.fitted.values[index.pred, "sd"]
   #we calculate the actual coverage probability of a prediction interval with nominal coverage probability 95%
   validation = list()
-  validation$res = test_data$incidence- post.mean.pred
+  validation$res = test_data$Incidence- post.mean.pred
   validation$res.std = validation$res /
     sqrt(post.sd.pred^2 + 1/Mod_Pred$summary.hyperpar[1,"mean"])
   validation$p = pnorm(validation$res.std)
   validation$cover = mean((validation$p>0.025) & (validation$p<0.975), na.rm=TRUE)
   cv_cover[[i]]<-validation$cover
   rmse<-sqrt(mean(validation$res^2, na.rm=TRUE))
-  me<-mean(post.mean.pred - test_data$incidence)
-  mse<-mean((post.mean.pred - test_data$incidence)^2)
+  me<-mean(post.mean.pred - test_data$Incidence)
+  mse<-mean((post.mean.pred - test_data$Incidence)^2)
   cv_results[[i]] <- post.mean.pred
   cv_test[[i]]<-test_data$inc
   cv_rmse[[i]]<-rmse
   cv_me[[i]]<-me
   cv_mse[[i]]<-mse
 }
+
+
