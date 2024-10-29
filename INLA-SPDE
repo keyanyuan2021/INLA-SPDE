@@ -338,4 +338,28 @@ for(i in 1:5){
   cv_mse[[i]]<-mse
 }
 
+# Corresponding SPSS statistical analyses converted into recognizable R code
+# Define the Z-test function
+data <- data.frame(
+  n1 = c(100, 150, 200),  # Household-registered residents
+  x1 = c(40, 60, 90),     # Incidence of the household-registered residents
+  n2 = c(120, 180, 220),  # Permanent residents
+  x2 = c(30, 70, 110)     # Incidence of the permanent residents
+)
 
+  p1 <- x1 / n1
+  p2 <- x2 / n2
+  p <- (x1 + x2) / (n1 + n2)
+  SE <- sqrt(p * (1 - p) * (1 / n1 + 1 / n2))
+  Z <- (p1 - p2) / SE
+  p_value <- 2 * pnorm(-abs(Z))
+  
+  return(c(Z = Z, p_value = p_value))
+}
+
+# Apply the Z-test function to each row
+results <- t(apply(data, 1, z_test))
+results_df <- as.data.frame(results)
+
+# Output
+print(results_df)
